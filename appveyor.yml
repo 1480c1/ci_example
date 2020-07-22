@@ -1,0 +1,47 @@
+# Appveyor general docs https://www.appveyor.com/docs/
+
+# We want to use Windows (https://www.appveyor.com/docs/build-environment/#build-worker-images)
+# Appveyor runs them in a Google Compute Engine VM or Amazon Web Service VM
+image: Visual Studio 2019
+
+# We want to use Release builds only
+configuration:
+  - Release
+# We can choose to skip a branch if it's in an active pr
+skip_branch_with_pr: true
+
+# Exclude certain branches, also accepts the opposite
+branches:
+  except:
+    - release
+
+# Skips commits that contain certain files
+skip_commits:
+  files:
+    - "Docs/*"
+
+# Set global environment variables
+environment:
+  APPVEYOR_SAVE_CACHE_ON_ERROR: true
+  MSYSTEM: MINGW64
+  MSYS2_PATH_TYPE: inherit
+  PKG_CONFIG_PATH: C:/msys64/mingw64/lib/pkgconfig
+  LONG_STRING_W_VAR: "Parsing Variables is fun $HOME"
+
+install:
+  # Appveyor uses cmd.exe by default, we can request powershell, pscore, and bash as well
+  - echo %LONG_STRING_W_VAR%
+  - pwsh: Write-Output $env:LONG_STRING_W_VAR
+  - set "PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin;%PATH%"
+  - pacman -Syyuu --ask=20 --noconfirm --noprogressbar --needed
+  - pacman -Suu --ask=20 --noconfirm --noprogressbar --needed mingw-w64-x86_64-ccache mingw-w64-x86_64-gcc mingw-w64-x86_64-ninja mingw-w64-x86_64-cmake
+  - cmake -B build -GNinja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=C:/msys64/mingw64
+
+build_script:
+  - cmake --build build --target install
+
+test_script:
+  - example.exe
+cache:
+  - 'C:\msys64\home\appveyor\.ccache'
+  - 'C:\msys64\var\cache\pacman\pkg'
