@@ -1,0 +1,144 @@
+# Travis-CI config file reference https://config.travis-ci.com/
+# Travis-CI general docs https://docs.travis-ci.com/
+
+# Going to use a predefined template of c
+language: c
+
+# Going to test on both linux and osx
+os:
+  - linux
+  - osx
+
+# Ubuntu 20.04
+# Also supports bionic and others
+dist: focal
+
+# We could check on two different xcode setups, but in this case, it will be easier to use just one.
+osx_image:
+  - xcode12 #  Xcode 12.0 with macOS 10.15.5
+# - xcode9.4 # Xcode  9.4 with macOS 10.13
+
+# We want to test our program to see if it works multiple cpu architectures
+# Only affects linux for now
+arch:
+  - amd64 # Runs using a virtual machine in Google Compute Engine (https://cloud.google.com/compute)
+  - arm64 # Runs in a LXD container in Packet (https://www.packet.com/)
+  - ppc64le # Runs using a LXD container in IBM Cloud (https://www.ibm.com/cloud)
+  - s390x # Runs in an LXD container in IBM Cloud (https://www.ibm.com/cloud)
+
+# MacOS runs in a vm on MacStadium (https://www.macstadium.com/) and does not support any arch other than amd64
+
+# We want to define some variables
+# Global variables will apply to all jobs
+# jobs variables will create a matrix
+env:
+  global:
+    # Variables are parsed as is in bash
+    - CCACHE_DIR=$HOME/.ccache
+    - LONG_STRING="Parsing spaces in programs is fun"
+  jobs:
+    - build_type=Release
+    - build_type=Debug
+
+# We happen to want to test gcc and clang
+compiler:
+  - gcc
+  - clang
+
+# Use ccache to cache c files and directories to cache arbitrary directories
+cache:
+  ccache: true
+#  directories:
+#    - $HOME/my_cache_dir
+
+# Send notifications to an email on failure
+notifications:
+  email:
+    - recipients: "my_emailing_list@randomderp.com"
+      on_failure: always
+
+# Don't build on these branches, supports a only: tag as the opposite
+branches:
+  except:
+    - release
+
+# Add some addons to auto install certain packages without needing direct calls to the package manager,
+# in this case cmake
+addons:
+  apt:
+    packages:
+      - cmake
+      - ninja-build
+  homebrew:
+    packages:
+      - cmake
+      - ccache
+      - ninja
+
+git:
+  depth: false # We want to clone all of the git history
+  quiet: true # We don't care about git's output
+
+# Some commands to run before anything else
+before_install:
+  # Long block command
+  - |
+    if [[ -f /proc/cpuinfo ]]; then
+      sort -u /proc/cpuinfo
+    else
+      sysctl -a
+    fi
+  - cmake --version
+  - $CC --version
+
+install:
+  # Variables are carried over between steps
+  - export CC="ccache $CC" CXX="ccache $CXX" PATH="/usr/local/opt/ccache/libexec:$PATH"
+  - "sudo chown -R $USER: $CCACHE_DIR"
+  - mkdir build
+  - cd build
+
+# Travis provides certain predefined variables for convenience
+script:
+  # Use preset variables
+  - cmake -GNinja "$TRAVIS_BUILD_DIR" -DCMAKE_BUILD_TYPE="${build_type:-Release}"
+  - cmake --build .
+  - ./example
+
+# Steps to run before travis starts caching
+before_cache:
+  - "sudo chown -R $USER: $CCACHE_DIR"
+  - ccache -c
+  - ccache -s
+
+jobs:
+  # We want to fail once one of the jobs fail
+  fast_finish: true
+  # exclude certain jobs based on matching
+  exclude:
+    - os: osx
+      compiler: gcc
+  # Add some other jobs
+  include:
+    - name: Docker Build
+      language: shell
+      addons:
+        apt:
+          packages:
+            - bash
+      services:
+        - docker
+      env:
+        # Add an encrypted environment
+        - secure: "N+E59+p5QhoVN76yLvLYmIc6YrnzH4pD9uQ0/PXUrc768aTIm9ewhb2RcfYmwoJ81b4d4pBZzbomksgAZqHFMf9JKeU1PHC6hnhobHoN1/9UZrJ0N9Onochbb3Q3yGLbSMMZTy9QDcNcXmPw16GSBwEPvhAw/C8bCJJIPbt4RciOcI/Vr18+24klRTNrP/Kz2bxxo+FgP1LcyKhLBWkDXjLZKPB847fR0ATTyoWadyQ+ClZjTzj5qBaM8RDHqKRYD647LEJenI6DsJ+3F3be27jBPoWMBPharN+rV9SKMihGACzcn70RC+xf6ACT5FhRpZK5TbPkbM/OTaCoR7CnVbVy9lj9uUWB2nIgNfvJ0xHJqdgHVBbjBUeAVuJ4igvzJMhJNQHByzGvaUIIrhUgdPb28+oYjWNm+n4AWlBoCSJ0PRZ1e3HXy5a++tLXDq+QYpczKT+1lsIoFvIsXbWnd3BqmOOoqG4XGYnRMqvfth4HNeOTjNkY0XM0HkRsU2jO02O8BucZHeaSAlkippueam1/uwpJROwCiti6r8zCY4N3PhQR4CMu53YgdKkVS34Ulym/DlTsvH30AZGdz6xTrxh6tXkv6QBA3j23XVV14zw0sI1L/HtUp69pMMhfCLYKnKviiJjJujSdCucFosgif/WRmuZqC8O8UDhybJaKZ40="
+      # We want to skip as much of the step because we don't need it
+      cache: false
+      before_cache: true
+      before_install: true
+      install:
+        - echo "$DOCKER_PASSWORD" | docker login -u 1480c1 --password-stdin
+      script:
+        - docker build --compress -t 1480c1/example:latest .
+      deploy:
+        provider: script
+        script: docker push 1480c1/example:latest
