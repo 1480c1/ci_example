@@ -1,0 +1,54 @@
+# Set the name of the job
+name: Cppcheck
+
+# Set some start conditions
+# In this case it's on push commits and pull_requests, but we are ignoring
+# certain files since they usually would not affect the output of cppcheck
+on:
+  push:
+    paths-ignore:
+      - "Docs/*"
+      - .travis.yml
+      - appveyor.yml
+      - "*.md"
+  pull_request:
+    paths-ignore:
+      - "Docs/*"
+      - .travis.yml
+      - appveyor.yml
+      - "*.md"
+
+jobs:
+  # Defining our job id
+  check:
+    # Github Actions supports other OS and OS versions such as 18.04 and macOS and windows
+    # https://docs.github.com/en/actions/reference/virtual-environments-for-github-hosted-runners#supported-runners-and-hardware-resources
+    runs-on: ubuntu-20.04
+    # We can use the strategy key to create a matrix of jobs with the keys and variables we want
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # We want to check cppcheck in both Release and debug
+          - build_type: Release
+          - build_type: Debug
+    steps:
+      # Use github's official checkout action
+      - uses: actions/checkout@v2
+      # We can run arbitrary bash commands
+      - name: Install dependencies
+        run: sudo apt-get install -y cppcheck
+      - name: Run CMake
+        # GitHub can use special ${{ thing }} syntax to directly parse certain javascript variables and keys directly into the script and yaml
+        # https://docs.github.com/en/actions/reference/context-and-expression-syntax-for-github-actions
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Run Cppcheck
+        # We can use github's special echo style to mark a file directly
+        # https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#setting-an-error-message
+        run: |
+          cppcheck \
+            --project=build/compile_commands.json \
+            --error-exitcode=1 \
+            --enable=all \
+            -j $(nproc) \
+            --template="::error file={file},line={line},col={column}::{severity}: {message} ({id})\n{file}:{line}"
