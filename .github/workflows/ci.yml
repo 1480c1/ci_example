@@ -1,0 +1,230 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  # https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#onschedule
+  schedule:
+    # “At minute 0 past every 6th hour.”
+    # https://crontab.guru/#0_*/6_*_*_*
+    - cron: "0 */6 * * *"
+
+# Global variables
+env:
+  # We need to be careful with setting variables here as they are set _as is_
+  # Meaning variable expansion etc does not occur here
+  # so this variable will show up literally as
+  # `Parsing Variables is fun $HOME`
+  LONG_STRING_W_VAR: "Parsing Variables is fun $HOME"
+  LDFLAGS: -pipe -static -static-libgcc
+
+jobs:
+  build-linux:
+    # We can use the context syntax even inside non-script places for dynamic values
+    name: Build ${{ matrix.CC }}
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - CC: gcc-7
+          - CC: gcc-9
+          - CC: gcc-10
+          - CC: clang-10
+            CFLAGS: -Weverything
+    env:
+      CC: ccache ${{ matrix.CC }}
+      CFLAGS: -static -Werror ${{ matrix.CFLAGS }}
+    steps:
+      - name: Echo our variable
+        # We can use both regular bash variable and GitHub's syntax
+        run: |
+          printf '%s\n' "$LONG_STRING_W_VAR" "${{ env.LONG_STRING_W_VAR }}"
+      - uses: actions/checkout@v2
+      # We are going to have to use one of GitHub's actions to implement arbitrary caching
+      - name: Cache ccache files
+        uses: actions/cache@v2
+        with:
+          # ~ is expanded in this case
+          path: ~/.ccache
+          # GitHub provides special functions such as hashFiles for non-script context
+          key: ${{ runner.os }}-${{ matrix.CC }}-${{ hashFiles('**/*.c') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.CC }}-
+      - name: Install dependencies
+        run: |
+          [ -d ~/.ccache ] && sudo chown -R "$USER": ~/.ccache
+
+          # We can use Github's special syntax to set environment variables that may need
+          # shell expansion and parsing
+          echo "::set-env name=CCACHE_DIR::$HOME/.ccache"
+          sudo apt-get update
+          sudo apt-get install -y ccache ninja-build ${{ matrix.CC }}
+      - name: Configure CMake
+        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release
+      - name: Build the executable
+        run: sudo -E cmake --build build --target install
+      - name: Upload the example
+        # We can limit certain steps from running based on the context
+        if: matrix.CC == 'gcc-10'
+        uses: actions/upload-artifact@v2
+        with:
+          name: example-bin-ubuntu-20.04
+          # This can use globbing
+          path: build/example
+
+  build-macOS:
+    name: Build macOS
+    runs-on: macos-10.15
+    env:
+      CC: ccache clang
+      CFLAGS: -Werror -Weverything
+      # Local variables will override global ones if present
+      LDFLAGS: -pipe
+    steps:
+      - name: Echo our variable
+        run: |
+          printf '%s\n' "$LONG_STRING_W_VAR" "${{ env.LONG_STRING_W_VAR }}"
+      - uses: actions/checkout@v2
+      - name: Cache ccache files
+        uses: actions/cache@v2
+        with:
+          # ~ is expanded in this case
+          path: ~/.ccache
+          # GitHub provides special functions such as hashFiles for non-script context
+          key: ${{ runner.os }}-clang-${{ hashFiles('**/*.c') }}
+          restore-keys: ${{ runner.os }}-clang-
+      - name: Install dependencies
+        run: |
+          [ -d ~/.ccache ] && sudo chown -R "$USER": ~/.ccache
+          brew update
+          brew upgrade
+          brew install ccache cmake ninja
+          printf '%s\n' \
+            "::set-env name=PATH::/usr/local/opt/ccache/libexec:$PATH" \
+            "::set-env name=CCACHE_DIR::$HOME/.ccache"
+      - name: Configure CMake
+        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release
+      - name: Build the executable
+        run: sudo -E cmake --build build --target install
+      - name: Upload the example
+        uses: actions/upload-artifact@v2
+        with:
+          name: example-bin-macos-10.15
+          path: build/example
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-2019
+    env:
+      CC: ccache gcc
+      CFLAGS: -Werror -Wall -Wextra -pipe -static -O3 -mtune=core2
+      MSYSTEM: MINGW64
+      MSYS2_PATH_TYPE: inherit
+      CHERE_INVOKING: true
+    steps:
+      - name: Echo our variable
+        # Windows uses powershell by default, but we can also specify bash or cmd
+        run: |
+          Write-Output "$LONG_STRING_W_VAR" "${{ env.LONG_STRING_W_VAR }}"
+      - name: Echo our variable (cmd)
+        shell: cmd
+        run: |
+          echo %LONG_STRING_W_VAR%
+          echo ${{ env.LONG_STRING_W_VAR }}
+      - uses: actions/checkout@v2
+      - name: Cache ccache files
+        uses: actions/cache@v2
+        with:
+          # We can use multiple patsh with this action
+          path: |
+            /home/runneradmin/.ccache
+            /c/Users/runneradmin/AppData/Roaming/.ccache
+          key: ${{ runner.os }}-gcc-${{ hashFiles('**/*.c') }}
+          restore-keys: ${{ runner.os }}-gcc-
+      - name: Setup PATH
+        run: |
+          Write-Output "::add-path::C:/msys64/usr/bin" "::add-path::C:/msys64/mingw64/bin"
+          C:/msys64/usr/bin/bash.exe -lc exit
+      - name: Update packages
+        run: |
+          sed -i 's/.*mingw32.*//g' C:/msys64/etc/pacman.conf
+          pacman -Syy
+          Copy-Item C:/msys64/var/lib/pacman/sync/mingw64.db mingw64.db
+      - name: Cache pacman packages
+        uses: actions/cache@v2
+        with:
+          path: /var/cache/pacman/pkg
+          key: ${{ runner.os }}-pacman-${{ hashFiles('mingw64.db') }}
+          restore-keys: ${{ runner.os }}-pacman-
+      - name: Setup msys2
+        run: |
+          pacman -Suu --ask=20 --noconfirm --noprogressbar
+          pacman -Su --ask=20 --noconfirm --noprogressbar
+          pacman -Sy --ask=20 --noconfirm --noprogressbar --needed mingw-w64-x86_64-ccache mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc mingw-w64-x86_64-ninja
+      - name: Configure CMake
+        run: cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=C:/msys64/mingw64
+      - name: Build the executable
+        run: cmake --build build --target install
+      - name: Upload the example
+        uses: actions/upload-artifact@v2
+        with:
+          name: example-bin-windows-2019
+          path: build/example.exe
+
+
+  Example-test:
+    # We can create job dependencies
+    needs:
+      - build-linux
+      - build-macOS
+      - build-windows
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-10.15
+          - os: ubuntu-20.04
+          - os: windows-2019
+    steps:
+      - name: Download the example
+        uses: actions/download-artifact@v2
+        with:
+          name: example-bin-${{ matrix.os }}
+      - name: Change the executable flag
+        if: runner.os != 'windows-2019'
+        run: chmod +x example
+      - name: Test out the example
+        run: ./example
+
+  upload-release:
+    name: Deploy on Release
+    needs:
+      - build-linux
+      - build-macOS
+      - build-windows
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Check release
+        id: get_release
+        # We can use Github's syntax to add an output that we can read from this step in successive steps
+        # Here we call Github's api directly and request the url we need to use to upload a file directly to a certain release
+        run: echo "::set-output name=upload_url::$(curl -L https://api.github.com/repos/${{ github.repository }}/releases/tags/$(cut -d/ -f3 <<< ${{ github.ref }}) | jq -r ."upload_url")"
+      - name: Get the binary
+        if: steps.get_release.outputs.upload_url != 'null'
+        uses: actions/download-artifact@v2
+        with:
+            name: example-bin-windows-2019
+      - name: Upload the binary
+        if: steps.get_release.outputs.upload_url != 'null'
+        uses: actions/upload-release-asset@v1
+        # actions can also use environment variables
+        env:
+          # The GITHUB_TOKEN secret is always present on jobs running in the default branch
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Here, we actually get to use the url provided
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: example.exe
+          asset_name: example.exe
+          asset_content_type: application/vnd.microsoft.portable-executable
