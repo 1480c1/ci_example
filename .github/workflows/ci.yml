@@ -188,7 +188,7 @@ jobs:
           - os: windows-2019
     steps:
       - name: Download the example
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4.1.7
         with:
           name: example-bin-${{ matrix.os }}
       - name: Change the executable flag
@@ -212,7 +212,7 @@ jobs:
         run: echo "::set-output name=upload_url::$(curl -L https://api.github.com/repos/${{ github.repository }}/releases/tags/$(cut -d/ -f3 <<< ${{ github.ref }}) | jq -r ."upload_url")"
       - name: Get the binary
         if: steps.get_release.outputs.upload_url != 'null'
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4.1.7
         with:
             name: example-bin-windows-2019
       - name: Upload the binary
